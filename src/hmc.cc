@@ -545,11 +545,11 @@ void HMCMemorySystem::DRAMClockTick() {
     for (size_t i = 0; i < ctrls_.size(); i++) {
         // look ahead and return earlier
         while (true) {
-            auto pair = ctrls_[i]->ReturnDoneTrans(clk_);
-            if (pair.second == 1) {  // write
-                VaultCallback(pair.first);
-            } else if (pair.second == 0) {  // read
-                VaultCallback(pair.first);
+            auto triple = ctrls_[i]->ReturnDoneTrans(clk_);
+            if (std::get<1>(triple) == 1) {  // write
+                VaultCallback(std::get<0>(triple));
+            } else if (std::get<1>(triple) == 0) {  // read
+                VaultCallback(std::get<0>(triple));
             } else {
                 break;
             }

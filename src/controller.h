@@ -29,15 +29,20 @@ class Controller {
 #endif  // THERMAL
     void ClockTick();
     bool WillAcceptTransaction(uint64_t hex_addr, bool is_write) const;
-    bool AddTransaction(Transaction trans);
+    std::pair<bool, uint64_t> AddTransaction(Transaction trans);
     int QueueUsage() const;
     // Stats output
     void PrintEpochStats();
     void PrintFinalStats();
     void ResetStats() { simple_stats_.Reset(); }
-    std::pair<uint64_t, int> ReturnDoneTrans(uint64_t clock);
+    std::tuple<uint64_t, int, uint64_t> ReturnDoneTrans(uint64_t clock);
 
     int channel_id_;
+
+    // Return the state of the channnel and controller to the orchestrator
+    ChannelState ReturnChannelState() const {
+        return channel_state_;
+    }
 
    private:
     uint64_t clk_;

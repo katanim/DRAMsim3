@@ -42,7 +42,7 @@ Controller::Controller(int channel, const Config &config, const Timing &timing)
 #endif  // CMD_TRACE
 }
 
-std::pair<uint64_t, int> Controller::ReturnDoneTrans(uint64_t clk) {
+std::tuple<uint64_t, int, uint64_t> Controller::ReturnDoneTrans(uint64_t clk) {
     auto it = return_queue_.begin();
     while (it != return_queue_.end()) {
         if (clk >= it->complete_cycle) {
@@ -52,14 +52,14 @@ std::pair<uint64_t, int> Controller::ReturnDoneTrans(uint64_t clk) {
                 simple_stats_.Increment("num_reads_done");
                 simple_stats_.AddValue("read_latency", clk_ - it->added_cycle);
             }
-            auto pair = std::make_pair(it->addr, it->is_write);
+            auto result = std::make_tuple(it->addr, it->is_write, it->added_cycle);
             it = return_queue_.erase(it);
-            return pair;
+            return result;
         } else {
             ++it;
         }
     }
-    return std::make_pair(-1, -1);
+    return std::make_tuple(uint64_t(-1), -1, uint64_t(-1));
 }
 
 void Controller::ClockTick() {
@@ -158,7 +158,7 @@ bool Controller::WillAcceptTransaction(uint64_t hex_addr, bool is_write) const {
     }
 }
 
-bool Controller::AddTransaction(Transaction trans) {
+std::pair<bool, uint64_t> Controller::AddTransaction(Transaction trans) {
     trans.added_cycle = clk_;
     simple_stats_.AddValue("interarrival_latency", clk_ - last_trans_clk_);
     last_trans_clk_ = clk_;
@@ -174,13 +174,15 @@ bool Controller::AddTransaction(Transaction trans) {
         }
         trans.complete_cycle = clk_ + 1;
         return_queue_.push_back(trans);
-        return true;
+        auto pair = std::make_pair(true, trans.added_cycle);
+        return pair;
     } else {  // read
         // if in write buffer, use the write buffer value
         if (pending_wr_q_.count(trans.addr) > 0) {
             trans.complete_cycle = clk_ + 1;
             return_queue_.push_back(trans);
-            return true;
+            auto pair = std::make_pair(true, trans.added_cycle);
+            return pair;
         }
         pending_rd_q_.insert(std::make_pair(trans.addr, trans));
         if (pending_rd_q_.count(trans.addr) == 1) {
@@ -190,7 +192,8 @@ bool Controller::AddTransaction(Transaction trans) {
                 read_queue_.push_back(trans);
             }
         }
-        return true;
+        auto pair = std::make_pair(true, trans.added_cycle);
+        return pair;
     }
 }
 

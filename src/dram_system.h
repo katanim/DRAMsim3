@@ -8,6 +8,7 @@
 #include "common.h"
 #include "configuration.h"
 #include "controller.h"
+#include "controller_state.h"
 #include "timing.h"
 
 #ifdef THERMAL
@@ -50,6 +51,7 @@ class BaseDRAMSystem {
 #endif  // THERMAL
 
     uint64_t clk_;
+    std::vector<ControllerState*> controller_states_;
     std::vector<Controller*> ctrls_;
 
 #ifdef ADDR_TRACE

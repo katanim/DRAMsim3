@@ -51,7 +51,7 @@ void BaseDRAMSystem::PrintEpochStats() {
 }
 
 void BaseDRAMSystem::PrintStats() {
-    // Finish epoch output, remove last comma and append ]
+    // Finish epoch output, remove slast comma and append ]
     std::ofstream epoch_out(config_.json_epoch_name, std::ios_base::in |
                                                          std::ios_base::out |
                                                          std::ios_base::ate);
@@ -70,6 +70,7 @@ void BaseDRAMSystem::PrintStats() {
             std::ofstream chan_out(config_.json_stats_name, std::ofstream::app);
             chan_out << "," << std::endl;
         }
+        controller_states_[i]->printStats();
     }
     json_out.open(config_.json_stats_name, std::ofstream::app);
     json_out << "}";
@@ -109,6 +110,7 @@ JedecDRAMSystem::JedecDRAMSystem(Config &config, const std::string &output_dir,
         ctrls_.push_back(new Controller(i, config_, timing_, thermal_calc_));
 #else
         ctrls_.push_back(new Controller(i, config_, timing_));
+        controller_states_.push_back(new ControllerState(i,config_));
 #endif  // THERMAL
     }
 }
@@ -132,13 +134,15 @@ bool JedecDRAMSystem::AddTransaction(uint64_t hex_addr, bool is_write) {
                    << (is_write ? "WRITE " : "READ ") << clk_ << std::endl;
 #endif
 
-    int channel = GetChannel(hex_addr);
+    int channel = GetChannel(hex_addr); // Determine the channel based on the address, we could change address here. 
     bool ok = ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
 
     assert(ok);
     if (ok) {
         Transaction trans = Transaction(hex_addr, is_write);
-        ctrls_[channel]->AddTransaction(trans);
+        auto pair = ctrls_[channel]->AddTransaction(trans);
+        // Record the transaction in the controller state
+        controller_states_[channel]->AddTransaction(hex_addr, is_write, pair.second);
     }
     last_req_clk_ = clk_;
     return ok;
@@ -148,11 +152,15 @@ void JedecDRAMSystem::ClockTick() {
     for (size_t i = 0; i < ctrls_.size(); i++) {
         // look ahead and return earlier
         while (true) {
-            auto pair = ctrls_[i]->ReturnDoneTrans(clk_);
-            if (pair.second == 1) {
-                write_callback_(pair.first);
-            } else if (pair.second == 0) {
-                read_callback_(pair.first);
+            // Updated the pair to truple to include the cycle when the transaction was added
+            // This is useful for removing the transaction from the controller state
+            auto triple = ctrls_[i]->ReturnDoneTrans(clk_);
+            //remove the transaction from the controller state
+            controller_states_[i]->RemoveTransaction(std::get<0>(triple), std::get<1>(triple), std::get<2>(triple));
+            if (std::get<1>(triple)== 1) {
+                write_callback_(std::get<0>(triple));
+            } else if (std::get<1>(triple)== 0) {
+                read_callback_(std::get<0>(triple));
             } else {
                 break;
             }
