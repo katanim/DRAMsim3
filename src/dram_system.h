@@ -34,6 +34,7 @@ class BaseDRAMSystem {
     virtual bool AddTransaction(uint64_t hex_addr, bool is_write) = 0;
     virtual void ClockTick() = 0;
     int GetChannel(uint64_t hex_addr) const;
+    uint64_t SetChannel(uint64_t hex_addr, int new_channel) const;
 
     std::function<void(uint64_t req_id)> read_callback_, write_callback_;
     static int total_channels_;
@@ -41,10 +42,11 @@ class BaseDRAMSystem {
    protected:
     uint64_t id_;
     uint64_t last_req_clk_;
-    Config &config_;
+    Config config_;
     Timing timing_;
     uint64_t parallel_cycles_;
     uint64_t serial_cycles_;
+    std::map <uint64_t , std::vector<int>> wr_cp_channels_;
 
 #ifdef THERMAL
     ThermalCalculator thermal_calc_;
@@ -68,6 +70,7 @@ class JedecDRAMSystem : public BaseDRAMSystem {
     ~JedecDRAMSystem();
     bool WillAcceptTransaction(uint64_t hex_addr, bool is_write) const override;
     bool AddTransaction(uint64_t hex_addr, bool is_write) override;
+    bool CopyWrite(uint64_t hex_addr, bool is_write);
     void ClockTick() override;
 };
 

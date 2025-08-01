@@ -29,7 +29,7 @@ class ControllerState {
     int GetChannelId() const { return channel_id_; };
     const Config &GetConfig() const { return config_; };
 
-    //Development idea 2: Keep track of transactions added and completed
+
     void AddTransaction(uint64_t hex_addr, bool is_writem, uint64_t added_cycle);
     void RemoveTransaction(uint64_t hex_addr, bool is_write, uint64_t added_cycle);
     void printStats() const {
@@ -40,11 +40,10 @@ class ControllerState {
         std::cout << "Same rank transactions: " << same_rank_ << std::endl;
     }
 
-    //for open_rows_ buffer. Needed for development idea 1 
+    void updateOpenRows(const ChannelState channel_state);
     void AddOpenRow(int rank, int bank_group, int bank, int row);
     void RemoveOpenRow(int rank, int bank_group, int bank, int row);
     int OpenRow(int rank, int bank_group, int bank) const;
-
 
     ~ControllerState();
 

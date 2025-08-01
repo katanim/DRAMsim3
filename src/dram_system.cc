@@ -28,9 +28,24 @@ BaseDRAMSystem::BaseDRAMSystem(Config &config, const std::string &output_dir,
 #endif
 }
 
+
+
 int BaseDRAMSystem::GetChannel(uint64_t hex_addr) const {
     hex_addr >>= config_.shift_bits;
     return (hex_addr >> config_.ch_pos) & config_.ch_mask;
+}
+
+// Returns a new address with the channel bits set to new_channel
+uint64_t BaseDRAMSystem::SetChannel(uint64_t hex_addr, int new_channel) const {
+    // This function is used to update the channel id of a transaction
+    uint64_t shifted_bits = hex_addr & ((1ULL << config_.shift_bits) - 1); // first shift_bits bits
+    // Clear current channel bits
+    uint64_t cleared_addr = (hex_addr>>config_.shift_bits) & ~((config_.ch_mask) << config_.ch_pos);
+    // Set new channel bits
+    uint64_t new_addr = cleared_addr | (((new_channel & config_.ch_mask)) << config_.ch_pos);
+    new_addr <<= config_.shift_bits;
+    new_addr |= new_addr | shifted_bits;
+    return new_addr;
 }
 
 void BaseDRAMSystem::PrintEpochStats() {
@@ -137,15 +152,79 @@ bool JedecDRAMSystem::AddTransaction(uint64_t hex_addr, bool is_write) {
     int channel = GetChannel(hex_addr); // Determine the channel based on the address, we could change address here. 
     bool ok = ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
 
-    assert(ok);
+    // assert(ok);
     if (ok) {
         Transaction trans = Transaction(hex_addr, is_write);
         auto pair = ctrls_[channel]->AddTransaction(trans);
         // Record the transaction in the controller state
         controller_states_[channel]->AddTransaction(hex_addr, is_write, pair.second);
+
+        // Get the current open rows in the channel state
+        controller_states_[channel]->updateOpenRows(ctrls_[channel]->ReturnChannelState());
     }
+    if (ok && is_write){
+        CopyWrite(hex_addr, is_write); // Copy the write transaction to other channels if possible
+    }
+    if (!ok && !is_write) {
+        auto it = wr_cp_channels_.find(hex_addr);
+        if (it != wr_cp_channels_.end()) {
+            // If the transaction is a read and it was previously copied to other channels
+            // try to read it from those channels
+            std::vector<int> channels = it->second;
+            for (int new_channel : channels) {
+                // If the transaction has already been copied to other channels, try to read it from those channels instead
+                uint64_t newaddr = SetChannel(hex_addr, new_channel); // we could change the address here if needed
+                ok = ctrls_[new_channel]->WillAcceptTransaction(newaddr, is_write);
+                if (ok) {
+                    auto pair = ctrls_[new_channel]->AddTransaction(Transaction(newaddr, is_write));
+                    // Record the transaction in the controller state
+                    controller_states_[new_channel]->AddTransaction(newaddr, is_write, pair.second);
+
+                    // Get the current open rows in the channel state
+                    controller_states_[new_channel]->updateOpenRows(ctrls_[new_channel]->ReturnChannelState());
+                    break; // break after finding a channel that accepts the transaction
+                }   
+            }
+        }
+    }
+
     last_req_clk_ = clk_;
     return ok;
+}
+
+bool JedecDRAMSystem::CopyWrite(uint64_t hex_addr, bool is_write) {
+    // This function is used to copy a write transaction to multiple channels
+    int channel = GetChannel(hex_addr);
+    int num_channels = config_.channels;
+    bool ok = false; // Initialize ok to false, will be set to true if the transaction is added successfully
+
+    if (wr_cp_channels_.find(hex_addr) != wr_cp_channels_.end()) {
+        // If the transaction has already been copied to other channels, empty the vector to ensure old info is not kept
+        wr_cp_channels_[hex_addr].clear();
+    }
+    //find channels that the transaction can be copied to
+    for (int i = 0; i < num_channels; i++) {
+        if (i == channel) {
+            continue; // skip the original channel
+        }
+        // if the channel accepts the transaction
+        int new_channel = i;
+        uint64_t newaddr = SetChannel(hex_addr, new_channel); // we could change the address here if needed
+        if (ctrls_[i]->WillAcceptTransaction(newaddr, is_write)) { 
+            // Add the transaction to the controller
+            auto pair = ctrls_[i]->AddTransaction(Transaction(newaddr, is_write));
+            // Record the transaction in the controller state
+            controller_states_[channel]->AddTransaction(newaddr, is_write, pair.second);
+
+            // Get the current open rows in the channel state
+            controller_states_[channel]->updateOpenRows(ctrls_[channel]->ReturnChannelState());
+
+            // Record the transaction in the write copy channels
+            wr_cp_channels_[hex_addr].push_back(new_channel);
+            ok = true;
+        }
+    }            
+    return ok; // return true if the transaction was added successfully
 }
 
 void JedecDRAMSystem::ClockTick() {
@@ -155,8 +234,12 @@ void JedecDRAMSystem::ClockTick() {
             // Updated the pair to truple to include the cycle when the transaction was added
             // This is useful for removing the transaction from the controller state
             auto triple = ctrls_[i]->ReturnDoneTrans(clk_);
+            if (std::get<0>(triple) == uint64_t(-1)) {
+                break; // no more transactions to return
+            }
             //remove the transaction from the controller state
             controller_states_[i]->RemoveTransaction(std::get<0>(triple), std::get<1>(triple), std::get<2>(triple));
+            controller_states_[i]->updateOpenRows(ctrls_[i]->ReturnChannelState());
             if (std::get<1>(triple)== 1) {
                 write_callback_(std::get<0>(triple));
             } else if (std::get<1>(triple)== 0) {

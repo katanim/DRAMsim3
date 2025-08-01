@@ -149,13 +149,23 @@ void Controller::ClockTick() {
 }
 
 bool Controller::WillAcceptTransaction(uint64_t hex_addr, bool is_write) const {
+    size_t capacity = 8;
+    // if (is_unified_queue_) {
+    //     return unified_queue_.size() < unified_queue_.capacity();
+    // } else if (!is_write) {
+    //     return read_queue_.size() < read_queue_.capacity();
+    // } else {
+    //     return write_buffer_.size() < write_buffer_.capacity();
+    // }
+
     if (is_unified_queue_) {
-        return unified_queue_.size() < unified_queue_.capacity();
+        return unified_queue_.size() < capacity;
     } else if (!is_write) {
-        return read_queue_.size() < read_queue_.capacity();
+        return read_queue_.size() < capacity;
     } else {
-        return write_buffer_.size() < write_buffer_.capacity();
+        return write_buffer_.size() < capacity;
     }
+    
 }
 
 std::pair<bool, uint64_t> Controller::AddTransaction(Transaction trans) {

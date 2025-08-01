@@ -21,11 +21,32 @@ namespace dramsim3 {
         // Destructor logic if needed
     }
     
+    void ControllerState::updateOpenRows(const ChannelState channel_state) {
+        // Clear the current open rows
+        open_rows_.clear();
+        // Iterate through the channel state to get the open rows
+        for (int rank = 0; rank < config_.ranks; ++rank) {
+            for (int bank_group = 0; bank_group < config_.bankgroups; ++bank_group) {
+                for (int bank = 0; bank < config_.banks_per_group; ++bank) {
+                    int open_row = channel_state.OpenRow(rank, bank_group, bank);
+                    if (open_row != -1) { // If there is an open row                        
+                        AddOpenRow(rank, bank_group, bank, open_row);
+                    }
+                    else {
+                        // If there is no open row, we can remove it from the open_rows_ map
+                        RemoveOpenRow(rank, bank_group, bank, open_row);
+                    }
+                }
+            }
+        }
+    }
+    
     //Development idea 2: Keep track of transactions added and completed
     void ControllerState::AddTransaction(uint64_t hex_addr, bool is_write, uint64_t added_cycle) {
         Address addr = config_.AddressMapping(hex_addr);
         auto key = std::make_tuple(addr.rank, addr.bankgroup, addr.bank, addr.row, added_cycle);
-        // If there is a transaction in the queue with the same row, bank, bank group, and rank, we can increment the count of same_row_, same_bank_, same_bank_group_, or same_rank_.
+        // If there is a transaction in the queue with the same row, bank, bank group, and rank,
+        // we can increment the count of same_row_, same_bank_, same_bank_group_, or same_rank_.
         for (const auto& [existing_key, txn] : submitted_transactions) {
             // existing_key is a tuple: (rank, bankgroup, bank, row, added_cycle)
             // Compare with current addr
