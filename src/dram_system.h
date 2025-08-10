@@ -35,6 +35,9 @@ class BaseDRAMSystem {
     virtual void ClockTick() = 0;
     int GetChannel(uint64_t hex_addr) const;
     uint64_t SetChannel(uint64_t hex_addr, int new_channel) const;
+    std::map <uint64_t , std::vector<int>> GetWriteCopyChannels() const {
+        return wr_cp_channels_;
+    }
 
     std::function<void(uint64_t req_id)> read_callback_, write_callback_;
     static int total_channels_;

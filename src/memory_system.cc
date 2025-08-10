@@ -39,7 +39,25 @@ void MemorySystem::RegisterCallbacks(
 
 bool MemorySystem::WillAcceptTransaction(uint64_t hex_addr,
                                          bool is_write) const {
-    return dram_system_->WillAcceptTransaction(hex_addr, is_write);
+    bool ok = dram_system_->WillAcceptTransaction(hex_addr, is_write);
+    if (!ok && !is_write) {
+        std::map <uint64_t , std::vector<int>> wr_cp_channels_ = dram_system_->GetWriteCopyChannels();
+        auto it = wr_cp_channels_.find(hex_addr);
+        if (it != wr_cp_channels_.end()) {
+            // If the transaction is a read and it was previously copied to other channels
+            // try to read it from those channels
+            std::vector<int> channels = it->second;
+            for (int new_channel : channels) {
+                // If the transaction has already been copied to other channels, try to read it from those channels instead
+                uint64_t newaddr = dram_system_->SetChannel(hex_addr, new_channel); // we could change the address here if needed
+                ok = dram_system_->WillAcceptTransaction(newaddr, is_write);
+                if (ok) {
+                    break; // break after finding a channel that accepts the transaction
+                }   
+            }
+        }
+    }                                      
+    return ok;
 }
 
 bool MemorySystem::AddTransaction(uint64_t hex_addr, bool is_write) {
