@@ -47,7 +47,7 @@ By default, it also creates `libdramsim3.so` shared library in the project root 
 ./build/dramsim3main -h
 
 # Running random stream with a config file
-./build/dramsim3main configs/DDR4_8Gb_x8_3200.ini --stream random -c 100000 
+./build/dramsim3main configs/DDR4_8Gb_x4_3200.ini --stream random -c 100000 
 ./build/dramsim3main configs/HBM2_4Gb_x128.ini --stream random -c 100000 
 
 # Running a trace file

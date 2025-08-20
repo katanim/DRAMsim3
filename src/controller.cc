@@ -149,23 +149,14 @@ void Controller::ClockTick() {
 }
 
 bool Controller::WillAcceptTransaction(uint64_t hex_addr, bool is_write) const {
-    size_t capacity = 8;
-    // if (is_unified_queue_) {
-    //     return unified_queue_.size() < unified_queue_.capacity();
-    // } else if (!is_write) {
-    //     return read_queue_.size() < read_queue_.capacity();
-    // } else {
-    //     return write_buffer_.size() < write_buffer_.capacity();
-    // }
-
+    // [TODO] consider if the command queue is full
     if (is_unified_queue_) {
-        return unified_queue_.size() < capacity;
+        return unified_queue_.size() < unified_queue_.capacity();
     } else if (!is_write) {
-        return read_queue_.size() < capacity;
+        return read_queue_.size() < read_queue_.capacity();
     } else {
-        return write_buffer_.size() < capacity;
+        return write_buffer_.size() < write_buffer_.capacity();
     }
-    
 }
 
 std::pair<bool, uint64_t> Controller::AddTransaction(Transaction trans) {
@@ -235,6 +226,9 @@ void Controller::ScheduleTransaction() {
             cmd_queue_.AddCommand(cmd);
             queue.erase(it);
             break;
+        }
+        else{
+            std::cout<< "Command queue is full, cannot accept command: " << cmd << std::endl;
         }
     }
 }
