@@ -138,30 +138,33 @@ JedecDRAMSystem::~JedecDRAMSystem() {
 
 bool JedecDRAMSystem::WillAcceptTransaction(uint64_t hex_addr,
                                             bool is_write) const {
+
+    int channel = GetChannel(hex_addr); // Determine the channel based on the address, we could change address here.
+    return ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
    
-    // if read return true if any of the channels in wr_cp_channels_ can accept the transaction
-    auto it = wr_cp_channels_.find(hex_addr);
-    if (it != wr_cp_channels_.end() && !is_write) {
-        for (auto channel : it->second) {
-            uint64_t new_addr = SetChannel(hex_addr, channel); // we could change the address here if needed
-            if (ctrls_[channel]->WillAcceptTransaction(new_addr, is_write)) {
-                return true;
-            }
-        }       
+    // // if read return true if any of the channels in wr_cp_channels_ can accept the transaction
+    // auto it = wr_cp_channels_.find(hex_addr);
+    // if (it != wr_cp_channels_.end() && !is_write) {
+    //     for (auto channel : it->second) {
+    //         uint64_t new_addr = SetChannel(hex_addr, channel); // we could change the address here if needed
+    //         if (ctrls_[channel]->WillAcceptTransaction(new_addr, is_write)) {
+    //             return true;
+    //         }
+    //     }       
         
-    }
+    // }
 
-    //if it's write, return true if any of the channels can accept the transaction
-    if(is_write){
-        for (int i = 0; i < config_.channels; i++) {
-            uint64_t new_addr = SetChannel(hex_addr, i);
-            if (ctrls_[i]->WillAcceptTransaction(new_addr, is_write)) {
-                return true;
-            }
-        }
+    // //if it's write, return true if any of the channels can accept the transaction
+    // if(is_write){
+    //     for (int i = 0; i < config_.channels; i++) {
+    //         uint64_t new_addr = SetChannel(hex_addr, i);
+    //         if (ctrls_[i]->WillAcceptTransaction(new_addr, is_write)) {
+    //             return true;
+    //         }
+    //     }
 
-    }
-    return false; // if none of the channels can accept the transaction return false
+    // }
+    // return false; // if none of the channels can accept the transaction return false
     
 }
 
