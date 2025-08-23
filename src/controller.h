@@ -44,6 +44,11 @@ class Controller {
         return channel_state_;
     }
 
+    // Return command queue size
+    int CommandQueueSize() const { 
+        return cmd_queue_.QueueUsage(); 
+    }
+
    private:
     uint64_t clk_;
     const Config &config_;

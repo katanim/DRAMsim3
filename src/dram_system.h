@@ -7,6 +7,7 @@
 
 #include "common.h"
 #include "configuration.h"
+#include "command_queue.h"
 #include "controller.h"
 #include "controller_state.h"
 #include "timing.h"
@@ -75,6 +76,7 @@ class JedecDRAMSystem : public BaseDRAMSystem {
     bool AddTransaction(uint64_t hex_addr, bool is_write) override;
     bool CopyWrite(uint64_t hex_addr, bool is_write);
     void ClockTick() override;
+    std::vector<int> SelectChannelsToAdd(uint64_t hex_addr, bool is_write);
 };
 
 // Model a memorysystem with an infinite bandwidth and a fixed latency (possibly

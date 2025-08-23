@@ -138,9 +138,82 @@ JedecDRAMSystem::~JedecDRAMSystem() {
 
 bool JedecDRAMSystem::WillAcceptTransaction(uint64_t hex_addr,
                                             bool is_write) const {
-    int channel = GetChannel(hex_addr);
-    return ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
+   
+    // if read return true if any of the channels in wr_cp_channels_ can accept the transaction
+    auto it = wr_cp_channels_.find(hex_addr);
+    if (it != wr_cp_channels_.end() && !is_write) {
+        for (auto channel : it->second) {
+            uint64_t new_addr = SetChannel(hex_addr, channel); // we could change the address here if needed
+            if (ctrls_[channel]->WillAcceptTransaction(new_addr, is_write)) {
+                return true;
+            }
+        }       
+        
+    }
+
+    //if it's write, return true if any of the channels can accept the transaction
+    if(is_write){
+        for (int i = 0; i < config_.channels; i++) {
+            uint64_t new_addr = SetChannel(hex_addr, i);
+            if (ctrls_[i]->WillAcceptTransaction(new_addr, is_write)) {
+                return true;
+            }
+        }
+
+    }
+    return false; // if none of the channels can accept the transaction return false
+    
 }
+
+// bool JedecDRAMSystem::AddTransaction(uint64_t hex_addr, bool is_write) {
+// // Record trace - Record address trace for debugging or other purposes
+// #ifdef ADDR_TRACE
+//     address_trace_ << std::hex << hex_addr << std::dec << " "
+//                    << (is_write ? "WRITE " : "READ ") << clk_ << std::endl;
+// #endif
+
+//     int channel = GetChannel(hex_addr); // Determine the channel based on the address, we could change address here. 
+//     bool ok = ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
+
+//     // assert(ok);
+//     if (ok) {
+//         Transaction trans = Transaction(hex_addr, is_write);
+//         auto pair = ctrls_[channel]->AddTransaction(trans);
+//         // Record the transaction in the controller state
+//         controller_states_[channel]->AddTransaction(hex_addr, is_write, pair.second);
+
+//         // Get the current open rows in the channel state
+//         controller_states_[channel]->updateOpenRows(ctrls_[channel]->ReturnChannelState());
+//     }
+//     if (ok && is_write){
+//         CopyWrite(hex_addr, is_write); // Copy the write transaction to other channels if possible
+//     }
+//     if (!ok && !is_write) {
+//         auto it = wr_cp_channels_.find(hex_addr);
+//         if (it != wr_cp_channels_.end()) {
+//             // If the transaction is a read and it was previously copied to other channels
+//             // try to read it from those channels
+//             std::vector<int> channels = it->second;
+//             for (int new_channel : channels) {
+//                 // If the transaction has already been copied to other channels, try to read it from those channels instead
+//                 uint64_t newaddr = SetChannel(hex_addr, new_channel); // we could change the address here if needed
+//                 ok = ctrls_[new_channel]->WillAcceptTransaction(newaddr, is_write);
+//                 if (ok) {
+//                     auto pair = ctrls_[new_channel]->AddTransaction(Transaction(newaddr, is_write));
+//                     // Record the transaction in the controller state
+//                     controller_states_[new_channel]->AddTransaction(newaddr, is_write, pair.second);
+
+//                     // Get the current open rows in the channel state
+//                     controller_states_[new_channel]->updateOpenRows(ctrls_[new_channel]->ReturnChannelState());
+//                     break; // break after finding a channel that accepts the transaction
+//                 }   
+//             }
+//         }
+//     }
+
+//     last_req_clk_ = clk_;
+//     return ok;
+// }
 
 bool JedecDRAMSystem::AddTransaction(uint64_t hex_addr, bool is_write) {
 // Record trace - Record address trace for debugging or other purposes
@@ -148,48 +221,77 @@ bool JedecDRAMSystem::AddTransaction(uint64_t hex_addr, bool is_write) {
     address_trace_ << std::hex << hex_addr << std::dec << " "
                    << (is_write ? "WRITE " : "READ ") << clk_ << std::endl;
 #endif
+    bool ok = false; // Initialize ok to false, will be set to true if the transaction is added successfully
+    std::vector<int> selected_channels = SelectChannelsToAdd(hex_addr, is_write);
+    
+    for (int channel : selected_channels) {
+        uint64_t new_addr = SetChannel(hex_addr, channel); // we could change the address here if needed
 
-    int channel = GetChannel(hex_addr); // Determine the channel based on the address, we could change address here. 
-    bool ok = ctrls_[channel]->WillAcceptTransaction(hex_addr, is_write);
-
-    // assert(ok);
-    if (ok) {
-        Transaction trans = Transaction(hex_addr, is_write);
+        Transaction trans = Transaction(new_addr, is_write);
         auto pair = ctrls_[channel]->AddTransaction(trans);
         // Record the transaction in the controller state
         controller_states_[channel]->AddTransaction(hex_addr, is_write, pair.second);
 
         // Get the current open rows in the channel state
         controller_states_[channel]->updateOpenRows(ctrls_[channel]->ReturnChannelState());
-    }
-    if (ok && is_write){
-        CopyWrite(hex_addr, is_write); // Copy the write transaction to other channels if possible
-    }
-    if (!ok && !is_write) {
-        auto it = wr_cp_channels_.find(hex_addr);
-        if (it != wr_cp_channels_.end()) {
-            // If the transaction is a read and it was previously copied to other channels
-            // try to read it from those channels
-            std::vector<int> channels = it->second;
-            for (int new_channel : channels) {
-                // If the transaction has already been copied to other channels, try to read it from those channels instead
-                uint64_t newaddr = SetChannel(hex_addr, new_channel); // we could change the address here if needed
-                ok = ctrls_[new_channel]->WillAcceptTransaction(newaddr, is_write);
-                if (ok) {
-                    auto pair = ctrls_[new_channel]->AddTransaction(Transaction(newaddr, is_write));
-                    // Record the transaction in the controller state
-                    controller_states_[new_channel]->AddTransaction(newaddr, is_write, pair.second);
 
-                    // Get the current open rows in the channel state
-                    controller_states_[new_channel]->updateOpenRows(ctrls_[new_channel]->ReturnChannelState());
-                    break; // break after finding a channel that accepts the transaction
-                }   
+        ok = true; // Set ok to true if at least one transaction is added successfully
+        if (is_write){
+            //record the channels that the write transaction was copied to
+            wr_cp_channels_[hex_addr].push_back(channel);
+        }
+        
+    }
+    return ok;
+}
+
+std::vector<int> JedecDRAMSystem::SelectChannelsToAdd(uint64_t hex_addr, bool is_write) {
+    std::vector<int> selected_channels;
+    int channel = GetChannel(hex_addr);
+    int num_channels = config_.channels;
+    // If the transaction is a write, return the channels it can be copied to
+    if (is_write) {
+        for (int i = 0; i < num_channels; i++) {
+            uint64_t new_addr = SetChannel(hex_addr, i);
+            bool can_accept = ctrls_[channel]->WillAcceptTransaction(new_addr, is_write);
+            int queue_size = ctrls_[channel]->QueueUsage();
+            if (can_accept && queue_size < config_.cmd_queue_size) {
+                selected_channels.push_back(i);
             }
         }
+                  
     }
 
-    last_req_clk_ = clk_;
-    return ok;
+    if (!is_write) {
+        // If the transaction is a read, check if it was previously copied to other channels
+        auto it = wr_cp_channels_.find(hex_addr);
+        if (it != wr_cp_channels_.end()) {
+            // If the transaction has already been copied to other channels, search those channels for the one with the smallest queue size
+            int selected_channel = it->second.at(0);
+            int min_queue_size = ctrls_[selected_channel]->QueueUsage();
+            for (auto channel : it->second) {
+                // Check if the channel can accept the transaction
+                uint64_t new_addr = SetChannel(hex_addr, channel);
+                bool can_accept = ctrls_[channel]->WillAcceptTransaction(new_addr, is_write);
+                int queue_size = ctrls_[channel]->QueueUsage();
+                // // Add to selected channels if it can accept and has space in the command queue
+                if (can_accept && queue_size < config_.cmd_queue_size && queue_size <= min_queue_size) {
+                    selected_channel = channel;
+                    min_queue_size = queue_size;
+                }
+            }
+            selected_channels.push_back(selected_channel);
+        } else {
+            // If the transaction has not been copied to other channels, return the original channel
+            selected_channels.push_back(channel);
+        }
+    }
+     if (selected_channels.empty()) {
+        // If no channels can accept the transaction, return the original channel
+        selected_channels.push_back(channel);
+    }
+    //if the transaction is a read, return the fastest channel to read from
+    return selected_channels;
 }
 
 bool JedecDRAMSystem::CopyWrite(uint64_t hex_addr, bool is_write) {

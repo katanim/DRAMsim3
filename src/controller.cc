@@ -227,9 +227,9 @@ void Controller::ScheduleTransaction() {
             queue.erase(it);
             break;
         }
-        else{
-            std::cout<< "Command queue is full, cannot accept command: " << cmd << std::endl;
-        }
+        // else{
+        //     std::cout<< "Command queue is full, cannot accept command: " << cmd << std::endl;
+        // }
     }
 }
 
