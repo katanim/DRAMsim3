@@ -3,6 +3,8 @@
 
 #include <unordered_set>
 #include <vector>
+#include <map>
+#include <tuple>
 #include "channel_state.h"
 #include "common.h"
 #include "configuration.h"
@@ -39,6 +41,39 @@ class CommandQueue {
     void GetRefQIndices(const Command& ref);
     void EraseRWCommand(const Command& cmd);
     Command PrepRefCmd(const CMDIterator& it, const Command& ref) const;
+
+    /*Re-inforcement learning*/
+    int learning_rate_ = 1; // alpha
+    int discount_factor_ = 0.9; // gamma
+    int threshold_ = 2; // threshold for number of commands needing same activate/precharge
+    
+    struct QTableKey {
+        int state;
+        Command cmd;
+        int value;
+    };
+
+    // Keeps track of the current state/value and the history for one feature.
+    struct FeatureTrack {
+        QTableKey current;
+        std::vector<QTableKey> history;
+    };
+
+    struct EnvState {
+        FeatureTrack num_rw_targeting_cls_bank_over_threshold;
+        FeatureTrack num_rw_targeting_opn_bank_over_threshold;
+        FeatureTrack num_rw_row_hits_over_threshold;
+        FeatureTrack more_reads_than_writes; // 1: more reads, -1: more writes, 0: equal
+        // FeatureTrack write_draining; // 1: yes, 0: no
+        FeatureTrack current_cmd_row_hit; // 1: row hit, 0: row miss
+    };
+
+    EnvState env_state_;
+    Command GetHighestQCommand(CMDQueue& queue) const;
+    int CalculateQValue(const Command& cmd) const;
+    void UpdateQValues(const Command& cmd);
+    void UpdateCurrentState(CMDQueue& queue);
+   
 
     QueueStructure queue_structure_;
     const Config& config_;

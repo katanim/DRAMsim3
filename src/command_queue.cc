@@ -31,6 +31,18 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
         cmd_queue.reserve(config_.cmd_queue_size);
         queues_.push_back(cmd_queue);
     }
+
+    //initialize env_state_
+    auto init_env = [](FeatureTrack& env) {
+        env.current = {0, Command(), 0};
+        env.history = {};
+    };
+    init_env(env_state_.num_rw_targeting_cls_bank_over_threshold);
+    init_env(env_state_.num_rw_targeting_opn_bank_over_threshold);
+    init_env(env_state_.num_rw_row_hits_over_threshold);
+    init_env(env_state_.more_reads_than_writes);
+    init_env(env_state_.current_cmd_row_hit);
+    // init_env(env_state_.write_draining);
 }
 
 Command CommandQueue::GetCommandToIssue() {
@@ -42,11 +54,13 @@ Command CommandQueue::GetCommandToIssue() {
                 continue;
             }
         }
+        UpdateCurrentState(queue);
         auto cmd = GetFirstReadyInQueue(queue);
         if (cmd.IsValid()) {
             if (cmd.IsReadWrite()) {
                 EraseRWCommand(cmd);
             }
+            UpdateQValues(cmd);
             return cmd;
         }
     }
@@ -227,6 +241,107 @@ bool CommandQueue::HasRWDependency(const CMDIterator& cmd_it,
         }
     }
     return false;
+}
+
+/*Re-inforcement learning*/
+// struct QTableKey {
+//         int state;
+//         int command;
+//         int value;
+//     };
+
+//     // Keeps track of the current state/value and the history for one feature.
+//     struct FeatureTrack {
+//         QTableKey current;
+//         std::vector<QTableKey> history;
+//     };
+
+//  struct EnvState {
+//         FeatureTrack num_rw_targeting_cls_bank_over_threshold;
+//         FeatureTrack num_rw_targeting_opn_bank_over_threshold;
+//         FeatureTrack num_rw_row_hits_over_threshold;
+//         FeatureTrack more_reads_than_writes; // 1: more reads, -1: more writes, 0: equal
+//         FeatureTrack current_cmd_row_hit; // 1: row hit, 0: row miss
+//     };
+
+
+Command CommandQueue::GetHighestQCommand(CMDQueue& queue) const{
+    return Command();
+}
+int CommandQueue::CalculateQValue(const Command& cmd) const{
+    return 0;
+}
+void CommandQueue::UpdateQValues(const Command& cmd) {
+    int Q = (cmd.IsReadWrite()) ? 1 : 0; // reward for read/write command
+    // Update Q-values for each feature
+    auto set_current = [cmd, Q](FeatureTrack& env) {
+        env.current = {env.current.state, cmd, Q};
+        env.history.push_back(env.current);
+    };
+    set_current(env_state_.num_rw_targeting_cls_bank_over_threshold);
+    set_current(env_state_.num_rw_targeting_opn_bank_over_threshold);
+    set_current(env_state_.num_rw_row_hits_over_threshold);
+    set_current(env_state_.more_reads_than_writes);
+    set_current(env_state_.current_cmd_row_hit);
+    return;
+}
+void CommandQueue::UpdateCurrentState(CMDQueue& queue){
+    int num_rd = 0;
+    int num_wr = 0;
+    int row_hits = 0;
+    int num_cmds_targeting_cls_banks = 0;
+    int num_cmds_targeting_opn_banks = 0;
+    for (auto cmd_it = queue.begin(); cmd_it != queue.end(); cmd_it++){
+        if (cmd_it->IsRead()) {
+            num_rd++;
+            int open_row =
+                channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
+            if (open_row == cmd_it->Row()) {
+                row_hits++;
+            }
+        } else if (cmd_it->IsWrite()) {
+            num_wr++;
+            int open_row =
+                channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
+            if (open_row == cmd_it->Row()) {
+                row_hits++;
+            }
+        }
+        int open_row =
+            channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
+        if (open_row == -1) {
+            num_cmds_targeting_opn_banks++;
+        } else {
+            num_cmds_targeting_cls_banks++;
+        }
+
+    }
+    //update num_rw_targeting_cls_bank_over_threshold
+    if (num_cmds_targeting_cls_banks > threshold_) {
+        env_state_.num_rw_targeting_cls_bank_over_threshold.current.state = 1;
+    } else {
+        env_state_.num_rw_targeting_cls_bank_over_threshold.current.state = 0;
+    }
+    //update num_rw_targeting_opn_bank_over_threshold
+    if (num_cmds_targeting_opn_banks > threshold_) {
+        env_state_.num_rw_targeting_opn_bank_over_threshold.current.state = 1;
+    } else {    
+        env_state_.num_rw_targeting_opn_bank_over_threshold.current.state = 0;
+    }
+    //update num_rw_row_hits_over_threshold
+    if (row_hits > threshold_) {
+        env_state_.num_rw_row_hits_over_threshold.current.state = 1;
+    } else {    
+        env_state_.num_rw_row_hits_over_threshold.current.state = 0;
+    }
+    //update more_reads_than_writes
+    if (num_rd > num_wr) {
+        env_state_.more_reads_than_writes.current.state = 1;
+    } else if (num_wr > num_rd) {
+        env_state_.more_reads_than_writes.current.state = -1;
+    } else {
+        env_state_.more_reads_than_writes.current.state = 0;
+    }    
 }
 
 }  // namespace dramsim3
