@@ -57,7 +57,8 @@ Command CommandQueue::GetCommandToIssue() {
             }
         }
         UpdateCurrentState(queue);
-        auto cmd = GetFirstReadyInQueue(queue);
+        // auto cmd = GetFirstReadyInQueue(queue);
+        auto cmd = GetHighestQCommand(queue);
         if (cmd.IsValid()) {
             if (cmd.IsReadWrite()) {
                 EraseRWCommand(cmd);
@@ -131,7 +132,7 @@ bool CommandQueue::WillAcceptCommand(int rank, int bankgroup, int bank) const {
 }
 
 bool CommandQueue::QueueEmpty() const {
-    for (const auto q : queues_) {
+    for (const auto &q : queues_) {
         if (!q.empty()) {
             return false;
         }
@@ -268,10 +269,79 @@ bool CommandQueue::HasRWDependency(const CMDIterator& cmd_it,
 
 
 Command CommandQueue::GetHighestQCommand(CMDQueue& queue) const{
+    std::vector<Command> ready_cmds = GetAllReadyCommands(queue);
+    if (!ready_cmds.empty()) {
+        Command best_cmd = ready_cmds[0];
+        float best_q_value = CalculateQValue(best_cmd);
+        for (size_t i = 1; i < ready_cmds.size(); i++) {
+            float q_value = CalculateQValue(ready_cmds[i]);
+            if (q_value > best_q_value) {
+                best_q_value = q_value;
+                best_cmd = ready_cmds[i];
+            }
+        }
+        return best_cmd;
+    }
     return Command();
 }
-int CommandQueue::CalculateQValue(const Command& cmd) const{
-    return 0;
+
+std::vector<Command> CommandQueue::GetAllReadyCommands(CMDQueue& queue) const{
+    static int call_count = 0;
+    call_count++;
+    std::vector<Command> ready_cmds;
+    for (auto cmd_it = queue.begin(); cmd_it != queue.end(); cmd_it++) {
+        Command cmd = channel_state_.GetReadyCommand(*cmd_it, clk_);
+        if (!cmd.IsValid()) {
+            continue;
+        }
+        if (cmd.cmd_type == CommandType::PRECHARGE) {
+            if (!ArbitratePrecharge(cmd_it, queue)) {
+                continue;
+            }
+        } else if (cmd.IsWrite()) {
+            if (HasRWDependency(cmd_it, queue)) {
+                continue;
+            }
+        }
+        ready_cmds.push_back(cmd);
+    }
+    if (ready_cmds.size() > 1)
+        std::cout << "GetAllReadyCommands called " << call_count << " times, found " << ready_cmds.size() << " ready commands." << std::endl;
+    return ready_cmds;
+}
+
+float CommandQueue::CalculateQValue(const Command& cmd) const {
+    int is_row_hit = 0;
+    if (cmd.IsReadWrite()) {
+        int open_row =
+            channel_state_.OpenRow(cmd.Rank(), cmd.Bankgroup(), cmd.Bank());
+        if (open_row == cmd.Row()) {
+            is_row_hit = 1;
+        }
+    }
+
+    auto get_q_val = [this, &cmd](const FeatureTrack& env, int state) {
+        for (const auto& itr : env.Q_values) {
+            if (itr.state == state && itr.cmd.cmd_type == cmd.cmd_type) {
+                return itr.value;
+            }
+        }
+        // No existing entry: return a default optimistic value to encourage exploration.
+        return 1.0f / (1.0f - discount_factor_);
+    };
+
+    float Q_total = 0.0f;
+    Q_total += get_q_val(env_state_.num_rw_targeting_cls_bank_over_threshold,
+                         env_state_.num_rw_targeting_cls_bank_over_threshold.current.state);
+    Q_total += get_q_val(env_state_.num_rw_targeting_opn_bank_over_threshold,
+                         env_state_.num_rw_targeting_opn_bank_over_threshold.current.state);
+    Q_total += get_q_val(env_state_.num_rw_row_hits_over_threshold,
+                         env_state_.num_rw_row_hits_over_threshold.current.state);
+    Q_total += get_q_val(env_state_.more_reads_than_writes,
+                         env_state_.more_reads_than_writes.current.state);
+    Q_total += get_q_val(env_state_.current_cmd_row_hit, is_row_hit);
+
+    return Q_total;
 }
 void CommandQueue::UpdateQValues(const Command& cmd) {
     float reward = 0;

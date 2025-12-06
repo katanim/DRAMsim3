@@ -75,7 +75,8 @@ class CommandQueue {
 
     EnvState env_state_;
     Command GetHighestQCommand(CMDQueue& queue) const;
-    int CalculateQValue(const Command& cmd) const;
+    std::vector<Command> GetAllReadyCommands(CMDQueue& queue) const;
+    float CalculateQValue(const Command& cmd) const;
     void UpdateQValues(const Command& cmd);
     void UpdateCurrentState(CMDQueue& queue);
     float SarsaUpdate(float Q_prev, int reward, float Q_selected);
