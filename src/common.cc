@@ -6,6 +6,28 @@
 
 namespace dramsim3 {
 
+const char* ToString(CommandType cmd_type) {
+    switch (cmd_type) {
+        case CommandType::READ: return "read";
+        case CommandType::READ_PRECHARGE: return "read_p";
+        case CommandType::WRITE: return "write";
+        case CommandType::WRITE_PRECHARGE: return "write_p";
+        case CommandType::ACTIVATE: return "activate";
+        case CommandType::PRECHARGE: return "precharge";
+        case CommandType::REFRESH_BANK: return "refresh_bank";
+        case CommandType::REFRESH: return "refresh";
+        case CommandType::SREF_ENTER: return "self_refresh_enter";
+        case CommandType::SREF_EXIT: return "self_refresh_exit";
+        case CommandType::SIZE: return "invalid";
+    }
+    return "invalid";
+}
+
+std::ostream& operator<<(std::ostream& os, CommandType cmd_type) {
+    os << ToString(cmd_type);
+    return os;
+}
+
 std::ostream& operator<<(std::ostream& os, const Command& cmd) {
     std::vector<std::string> command_string = {
         "read",

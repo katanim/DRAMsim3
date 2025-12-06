@@ -65,6 +65,9 @@ enum class CommandType {
     SIZE
 };
 
+const char* ToString(CommandType cmd_type);
+std::ostream& operator<<(std::ostream& os, CommandType cmd_type);
+
 struct Command {
     Command() : cmd_type(CommandType::SIZE), hex_addr(0) {}
     Command(CommandType cmd_type, const Address& addr, uint64_t hex_addr)

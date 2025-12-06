@@ -292,7 +292,12 @@ void Controller::PrintEpochStats() {
 }
 
 void Controller::PrintFinalStats() {
+    std::cout << "Final Stats for Channel " << channel_id_ << std::endl;
     simple_stats_.PrintFinalStats();
+    cmd_queue_.DumpEnvState(
+        config_.output_prefix + "ch_" + std::to_string(channel_id_) +
+        "_cmd_queue_env_state");
+
 
 #ifdef THERMAL
     for (int r = 0; r < config_.ranks; r++) {

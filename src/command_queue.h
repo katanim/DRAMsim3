@@ -27,7 +27,9 @@ class CommandQueue {
     bool AddCommand(Command cmd);
     bool QueueEmpty() const;
     int QueueUsage() const;
+    void DumpEnvState(const std::string& filename) const;
     std::vector<bool> rank_q_empty;
+    
 
    private:
     bool ArbitratePrecharge(const CMDIterator& cmd_it,
@@ -43,19 +45,22 @@ class CommandQueue {
     Command PrepRefCmd(const CMDIterator& it, const Command& ref) const;
 
     /*Re-inforcement learning*/
-    int learning_rate_ = 1; // alpha
-    int discount_factor_ = 0.9; // gamma
+    float learning_rate_ = 1; // alpha
+    float discount_factor_ = 0.9; // gamma
+    float exploration_rate_ = 0.1; // epsilon
     int threshold_ = 2; // threshold for number of commands needing same activate/precharge
     
     struct QTableKey {
         int state;
         Command cmd;
-        int value;
+        float value;
     };
 
     // Keeps track of the current state/value and the history for one feature.
     struct FeatureTrack {
         QTableKey current;
+        QTableKey prev;
+        std::vector<QTableKey> Q_values;
         std::vector<QTableKey> history;
     };
 
@@ -64,8 +69,8 @@ class CommandQueue {
         FeatureTrack num_rw_targeting_opn_bank_over_threshold;
         FeatureTrack num_rw_row_hits_over_threshold;
         FeatureTrack more_reads_than_writes; // 1: more reads, -1: more writes, 0: equal
-        // FeatureTrack write_draining; // 1: yes, 0: no
         FeatureTrack current_cmd_row_hit; // 1: row hit, 0: row miss
+        // FeatureTrack write_draining; // 1: yes, 0: no
     };
 
     EnvState env_state_;
@@ -73,7 +78,8 @@ class CommandQueue {
     int CalculateQValue(const Command& cmd) const;
     void UpdateQValues(const Command& cmd);
     void UpdateCurrentState(CMDQueue& queue);
-   
+    float SarsaUpdate(float Q_prev, int reward, float Q_selected);
+    float GetCurrentQValue(const Command cmd, FeatureTrack& env) const;
 
     QueueStructure queue_structure_;
     const Config& config_;

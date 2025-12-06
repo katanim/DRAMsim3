@@ -35,6 +35,8 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
     //initialize env_state_
     auto init_env = [](FeatureTrack& env) {
         env.current = {0, Command(), 0};
+        env.prev = {0, Command(), 0};
+        env.Q_values = {};  
         env.history = {};
     };
     init_env(env_state_.num_rw_targeting_cls_bank_over_threshold);
@@ -272,11 +274,39 @@ int CommandQueue::CalculateQValue(const Command& cmd) const{
     return 0;
 }
 void CommandQueue::UpdateQValues(const Command& cmd) {
-    int Q = (cmd.IsReadWrite()) ? 1 : 0; // reward for read/write command
+    float reward = 0;
+    // Get reward based on command type
+    if (cmd.IsReadWrite()) {
+        reward += 1; // additional reward for read/write command
+        int open_row =
+                channel_state_.OpenRow(cmd.Rank(), cmd.Bankgroup(), cmd.Bank());
+        if (open_row == cmd.Row()) {
+           env_state_.current_cmd_row_hit.current.state = 1;
+        }
+    } else {
+        env_state_.current_cmd_row_hit.current.state = 0;
+    }
+    
     // Update Q-values for each feature
-    auto set_current = [cmd, Q](FeatureTrack& env) {
-        env.current = {env.current.state, cmd, Q};
+    auto set_current = [this, &cmd, reward](FeatureTrack& env) {
+        float q_current = GetCurrentQValue(cmd, env);
+        env.current = {env.current.state, cmd, q_current};
         env.history.push_back(env.current);
+
+        float q_prev_updated = SarsaUpdate(env.prev.value, reward, q_current);
+
+        for (auto& itr : env.Q_values) {
+            if (itr.state == env.prev.state &&
+                itr.cmd.cmd_type == env.prev.cmd.cmd_type) {
+                itr.value = q_prev_updated;
+                env.prev = env.current;
+                return;
+            }
+        }
+
+        // If no existing entry, initialize with updated value and track it.
+        env.Q_values.push_back({env.prev.state, env.prev.cmd, q_prev_updated});
+        env.prev = env.current;
     };
     set_current(env_state_.num_rw_targeting_cls_bank_over_threshold);
     set_current(env_state_.num_rw_targeting_opn_bank_over_threshold);
@@ -344,4 +374,73 @@ void CommandQueue::UpdateCurrentState(CMDQueue& queue){
     }    
 }
 
+void CommandQueue::DumpEnvState(const std::string& filename) const {
+    string filename_ = filename + "_history.csv";
+    std::ofstream outfile;
+    outfile.open(filename_, std::ios_base::app);
+    outfile << "env_track,state,cmd,value" << std::endl;
+    int history_size = env_state_.num_rw_targeting_cls_bank_over_threshold.history.size();
+    for (int i = 0; i < history_size; i++) {
+        outfile << "num_rw_targeting_cls_bank_over_threshold,"
+                << env_state_.num_rw_targeting_cls_bank_over_threshold.history[i].state << ","
+                << env_state_.num_rw_targeting_cls_bank_over_threshold.history[i].cmd.cmd_type  << ","
+                << env_state_.num_rw_targeting_cls_bank_over_threshold.history[i].value << std::endl
+                << "num_rw_targeting_opn_bank_over_threshold,"
+                << env_state_.num_rw_targeting_opn_bank_over_threshold.history[i].state << ","
+                << env_state_.num_rw_targeting_opn_bank_over_threshold.history[i].cmd.cmd_type  << ","
+                << env_state_.num_rw_targeting_opn_bank_over_threshold.history[i].value <<  std::endl
+                << "num_rw_row_hits_over_threshold,"
+                << env_state_.num_rw_row_hits_over_threshold.history[i].state << ","
+                << env_state_.num_rw_row_hits_over_threshold.history[i].cmd.cmd_type << ","
+                << env_state_.num_rw_row_hits_over_threshold.history[i].value << std::endl
+                << "more_reads_than_writes,"
+                << env_state_.more_reads_than_writes.history[i].state << ","
+                << env_state_.more_reads_than_writes.history[i].cmd.cmd_type  << ","
+                << env_state_.more_reads_than_writes.history[i].value <<std::endl
+                << "current_cmd_row_hit,"
+                << env_state_.current_cmd_row_hit.history[i].state<< ","
+                << env_state_.current_cmd_row_hit.history[i].cmd.cmd_type << ","
+                << env_state_.current_cmd_row_hit.history[i].value << std::endl;
+
+    }
+    outfile.close();
+
+    filename_ = filename + "_q_values.csv";
+    outfile.open(filename_, std::ios_base::app);
+    outfile << "env_track,state,cmd,value" << std::endl;
+    
+
+    auto print_q_vals = [&outfile](const FeatureTrack& env, const std::string& env_track) {
+        for (const auto& itr : env.Q_values) {
+            outfile << env_track << ","
+                    << itr.state << ","
+                    << itr.cmd.cmd_type  << ","
+                    << itr.value << std::endl;
+            }
+    };
+    print_q_vals(env_state_.num_rw_targeting_cls_bank_over_threshold, "num_rw_targeting_cls_bank_over_threshold");
+    print_q_vals(env_state_.num_rw_targeting_opn_bank_over_threshold, "num_rw_targeting_opn_bank_over_threshold");
+    print_q_vals(env_state_.num_rw_row_hits_over_threshold, "num_rw_row_hits_over_threshold");
+    print_q_vals(env_state_.more_reads_than_writes, "more_reads_than_writes");
+    print_q_vals(env_state_.current_cmd_row_hit, "current_cmd_row_hit");
+
+
+}
+float CommandQueue::SarsaUpdate(float Q_prev, int reward, float Q_selected) {
+    float discounted_future_reward = discount_factor_ * Q_selected;
+    float sample_estimate = reward + discounted_future_reward;
+    float updated_Q_value = (1.0f - learning_rate_) * Q_prev + learning_rate_ * sample_estimate;
+    
+    return updated_Q_value;
+}
+
+float CommandQueue::GetCurrentQValue(const Command cmd, FeatureTrack& env) const {
+    for (const auto& itr : env.Q_values) {
+        if (itr.state == env.current.state &&
+            itr.cmd.cmd_type == cmd.cmd_type) {
+            return itr.value;
+        }
+    }
+    return (1/1-discount_factor_);
+}
 }  // namespace dramsim3
