@@ -1,4 +1,5 @@
 #include "command_queue.h"
+#include <random>
 
 namespace dramsim3 {
 
@@ -57,8 +58,22 @@ Command CommandQueue::GetCommandToIssue() {
             }
         }
         UpdateCurrentState(queue);
-        // auto cmd = GetFirstReadyInQueue(queue);
-        auto cmd = GetHighestQCommand(queue);
+
+        std::vector<Command> ready_cmds = GetAllReadyCommands(queue);
+        if (ready_cmds.empty()) {
+            continue;
+        }
+
+        static thread_local std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> explore_dist(0.0f, 1.0f);
+
+        Command cmd;
+        if (explore_dist(rng) < exploration_rate_) {
+            std::uniform_int_distribution<size_t> idx_dist(0, ready_cmds.size() - 1);
+            cmd = ready_cmds[idx_dist(rng)];
+        } else {
+            cmd = GetHighestQCommand(queue);
+        }
         if (cmd.IsValid()) {
             if (cmd.IsReadWrite()) {
                 EraseRWCommand(cmd);
@@ -305,8 +320,14 @@ std::vector<Command> CommandQueue::GetAllReadyCommands(CMDQueue& queue) const{
         }
         ready_cmds.push_back(cmd);
     }
-    if (ready_cmds.size() > 1)
-        std::cout << "GetAllReadyCommands called " << call_count << " times, found " << ready_cmds.size() << " ready commands." << std::endl;
+    if (ready_cmds.size() > 1){
+        for (const auto& cmd : ready_cmds) {
+            std::cout << "GetAllReadyCommands called " << call_count << " times, found " << ready_cmds.size() << " ready commands." << std::endl;
+            if (cmd.cmd_type != CommandType::ACTIVATE) {
+                std::cout << "Command: " << static_cast<int>(cmd.cmd_type) << std::endl;
+            }
+        }
+    }
     return ready_cmds;
 }
 
@@ -409,7 +430,7 @@ void CommandQueue::UpdateCurrentState(CMDQueue& queue){
         }
         int open_row =
             channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
-        if (open_row == -1) {
+        if (open_row != -1) {
             num_cmds_targeting_opn_banks++;
         } else {
             num_cmds_targeting_cls_banks++;
@@ -511,6 +532,6 @@ float CommandQueue::GetCurrentQValue(const Command cmd, FeatureTrack& env) const
             return itr.value;
         }
     }
-    return (1/1-discount_factor_);
+    return (1.0f/(1.0f-discount_factor_));
 }
 }  // namespace dramsim3
