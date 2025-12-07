@@ -45,6 +45,7 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
     init_env(env_state_.num_rw_row_hits_over_threshold);
     init_env(env_state_.more_reads_than_writes);
     init_env(env_state_.current_cmd_row_hit);
+    init_env(env_state_.writes_to_same_row);
     // init_env(env_state_.write_draining);
 }
 
@@ -75,6 +76,10 @@ Command CommandQueue::GetCommandToIssue() {
             cmd = GetHighestQCommand(queue);
         }
         if (cmd.IsValid()) {
+            int writes_to_same_row = CountWritesToSameRow(queue, cmd);
+            env_state_.writes_to_same_row.current.state =
+                writes_to_same_row > threshold_ ? 1 : 0;
+
             if (cmd.IsReadWrite()) {
                 EraseRWCommand(cmd);
             }
@@ -287,9 +292,9 @@ Command CommandQueue::GetHighestQCommand(CMDQueue& queue) const{
     std::vector<Command> ready_cmds = GetAllReadyCommands(queue);
     if (!ready_cmds.empty()) {
         Command best_cmd = ready_cmds[0];
-        float best_q_value = CalculateQValue(best_cmd);
+        float best_q_value = CalculateQValue(best_cmd, queue);
         for (size_t i = 1; i < ready_cmds.size(); i++) {
-            float q_value = CalculateQValue(ready_cmds[i]);
+            float q_value = CalculateQValue(ready_cmds[i], queue);
             if (q_value > best_q_value) {
                 best_q_value = q_value;
                 best_cmd = ready_cmds[i];
@@ -331,7 +336,7 @@ std::vector<Command> CommandQueue::GetAllReadyCommands(CMDQueue& queue) const{
     return ready_cmds;
 }
 
-float CommandQueue::CalculateQValue(const Command& cmd) const {
+float CommandQueue::CalculateQValue(const Command& cmd, const CMDQueue& queue) const {
     int is_row_hit = 0;
     if (cmd.IsReadWrite()) {
         int open_row =
@@ -340,6 +345,8 @@ float CommandQueue::CalculateQValue(const Command& cmd) const {
             is_row_hit = 1;
         }
     }
+    int writes_to_same_row_state =
+        CountWritesToSameRow(queue, cmd) > threshold_ ? 1 : 0;
 
     auto get_q_val = [this, &cmd](const FeatureTrack& env, int state) {
         for (const auto& itr : env.Q_values) {
@@ -361,6 +368,7 @@ float CommandQueue::CalculateQValue(const Command& cmd) const {
     Q_total += get_q_val(env_state_.more_reads_than_writes,
                          env_state_.more_reads_than_writes.current.state);
     Q_total += get_q_val(env_state_.current_cmd_row_hit, is_row_hit);
+    Q_total += get_q_val(env_state_.writes_to_same_row, writes_to_same_row_state);
 
     return Q_total;
 }
@@ -404,6 +412,7 @@ void CommandQueue::UpdateQValues(const Command& cmd) {
     set_current(env_state_.num_rw_row_hits_over_threshold);
     set_current(env_state_.more_reads_than_writes);
     set_current(env_state_.current_cmd_row_hit);
+    set_current(env_state_.writes_to_same_row);
     return;
 }
 void CommandQueue::UpdateCurrentState(CMDQueue& queue){
@@ -491,7 +500,11 @@ void CommandQueue::DumpEnvState(const std::string& filename) const {
                 << "current_cmd_row_hit,"
                 << env_state_.current_cmd_row_hit.history[i].state<< ","
                 << env_state_.current_cmd_row_hit.history[i].cmd.cmd_type << ","
-                << env_state_.current_cmd_row_hit.history[i].value << std::endl;
+                << env_state_.current_cmd_row_hit.history[i].value << std::endl
+                << "writes_to_same_row,"
+                << env_state_.writes_to_same_row.history[i].state<< ","
+                << env_state_.writes_to_same_row.history[i].cmd.cmd_type << ","
+                << env_state_.writes_to_same_row.history[i].value << std::endl;
 
     }
     outfile.close();
@@ -514,6 +527,7 @@ void CommandQueue::DumpEnvState(const std::string& filename) const {
     print_q_vals(env_state_.num_rw_row_hits_over_threshold, "num_rw_row_hits_over_threshold");
     print_q_vals(env_state_.more_reads_than_writes, "more_reads_than_writes");
     print_q_vals(env_state_.current_cmd_row_hit, "current_cmd_row_hit");
+    print_q_vals(env_state_.writes_to_same_row, "writes_to_same_row");
 
 
 }
@@ -533,5 +547,19 @@ float CommandQueue::GetCurrentQValue(const Command cmd, FeatureTrack& env) const
         }
     }
     return (1.0f/(1.0f-discount_factor_));
+}
+
+int CommandQueue::CountWritesToSameRow(const CMDQueue& queue, const Command& cmd) const {
+    int writes_to_same_row = 0;
+    for (const auto& other : queue) {
+        if (other.IsWrite() &&
+            other.Rank()      == cmd.Rank() &&
+            other.Bank()      == cmd.Bank() &&
+            other.Bankgroup() == cmd.Bankgroup() &&
+            other.Row()       == cmd.Row()) {
+            writes_to_same_row++;
+        }
+    }
+    return writes_to_same_row;
 }
 }  // namespace dramsim3

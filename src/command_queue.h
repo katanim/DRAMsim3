@@ -70,17 +70,19 @@ class CommandQueue {
         FeatureTrack num_rw_row_hits_over_threshold;
         FeatureTrack more_reads_than_writes; // 1: more reads, -1: more writes, 0: equal
         FeatureTrack current_cmd_row_hit; // 1: row hit, 0: row miss
+        FeatureTrack writes_to_same_row; // 1: many writes to same row pending
         // FeatureTrack write_draining; // 1: yes, 0: no
     };
 
     EnvState env_state_;
     Command GetHighestQCommand(CMDQueue& queue) const;
     std::vector<Command> GetAllReadyCommands(CMDQueue& queue) const;
-    float CalculateQValue(const Command& cmd) const;
+    float CalculateQValue(const Command& cmd, const CMDQueue& queue) const;
     void UpdateQValues(const Command& cmd);
     void UpdateCurrentState(CMDQueue& queue);
     float SarsaUpdate(float Q_prev, int reward, float Q_selected);
     float GetCurrentQValue(const Command cmd, FeatureTrack& env) const;
+    int CountWritesToSameRow(const CMDQueue& queue, const Command& cmd) const;
 
     QueueStructure queue_structure_;
     const Config& config_;
