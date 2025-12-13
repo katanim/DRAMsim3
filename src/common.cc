@@ -18,6 +18,7 @@ const char* ToString(CommandType cmd_type) {
         case CommandType::REFRESH: return "refresh";
         case CommandType::SREF_ENTER: return "self_refresh_enter";
         case CommandType::SREF_EXIT: return "self_refresh_exit";
+        case CommandType::NOP: return "NOP";
         case CommandType::SIZE: return "invalid";
     }
     return "invalid";
@@ -40,6 +41,7 @@ std::ostream& operator<<(std::ostream& os, const Command& cmd) {
         "refresh",
         "self_refresh_enter",
         "self_refresh_exit",
+        "NOP",
         "WRONG"};
     os << fmt::format("{:<20} {:>3} {:>3} {:>3} {:>3} {:>#8x} {:>#8x}",
                       command_string[static_cast<int>(cmd.cmd_type)],

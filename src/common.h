@@ -62,6 +62,7 @@ enum class CommandType {
     REFRESH,
     SREF_ENTER,
     SREF_EXIT,
+    NOP,
     SIZE
 };
 

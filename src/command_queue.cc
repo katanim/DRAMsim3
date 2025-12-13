@@ -63,27 +63,32 @@ Command CommandQueue::GetCommandToIssue() {
         ready_cmds.insert(ready_cmds.end(), this_queue_.begin(), this_queue_.end());
     }
     UpdateCurrentState();
-    static thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<float> explore_dist(0.0f, 1.0f);
+    if (!ready_cmds.empty()) {
+        static thread_local std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> explore_dist(0.0f, 1.0f);
 
-    Command cmd;
-    if (explore_dist(rng) < exploration_rate_) {
-        std::uniform_int_distribution<size_t> idx_dist(0, ready_cmds.size() - 1);
-        cmd = ready_cmds[idx_dist(rng)];
-    } else {
-        cmd = GetHighestQCommand(ready_cmds);
-    }
-    if (cmd.IsValid()) {
-        int writes_to_same_row = CountWritesToSameRow(cmd);
-        env_state_.writes_to_same_row.current.state =
-            writes_to_same_row > threshold_ ? 1 : 0;
-
-        if (cmd.IsReadWrite()) {
-            EraseRWCommand(cmd);
+        Command cmd;
+        if (explore_dist(rng) < exploration_rate_) {
+            std::uniform_int_distribution<size_t> idx_dist(0, ready_cmds.size() - 1);
+            cmd = ready_cmds[idx_dist(rng)];
+        } else {
+            cmd = GetHighestQCommand(ready_cmds);
         }
-        UpdateQValues(cmd);
-        return cmd;
+        if (cmd.IsValid()) {
+            int writes_to_same_row = CountWritesToSameRow(cmd);
+            env_state_.writes_to_same_row.current.state =
+                writes_to_same_row > threshold_ ? 1 : 0;
+
+            if (cmd.IsReadWrite()) {
+                EraseRWCommand(cmd);
+            }
+            UpdateQValues(cmd);
+            return cmd;
+        }
     }
+
+    Command nop_cmd;
+    nop_cmd.cmd_type = CommandType::NOP; 
     
     return Command();
 }
