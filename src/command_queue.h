@@ -75,14 +75,14 @@ class CommandQueue {
     };
 
     EnvState env_state_;
-    Command GetHighestQCommand(CMDQueue& queue) const;
+    Command GetHighestQCommand(std::vector<Command> ready_cmds);
     std::vector<Command> GetAllReadyCommands(CMDQueue& queue) const;
-    float CalculateQValue(const Command& cmd, const CMDQueue& queue) const;
+    float CalculateQValue(const Command& cmd);
     void UpdateQValues(const Command& cmd);
-    void UpdateCurrentState(CMDQueue& queue);
+    void UpdateCurrentState();
     float SarsaUpdate(float Q_prev, int reward, float Q_selected);
     float GetCurrentQValue(const Command cmd, FeatureTrack& env) const;
-    int CountWritesToSameRow(const CMDQueue& queue, const Command& cmd) const;
+    int CountWritesToSameRow(const Command& cmd);
 
     QueueStructure queue_structure_;
     const Config& config_;

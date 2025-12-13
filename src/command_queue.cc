@@ -50,6 +50,7 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
 }
 
 Command CommandQueue::GetCommandToIssue() {
+    std::vector<Command> ready_cmds = {};
     for (int i = 0; i < num_queues_; i++) {
         auto& queue = GetNextQueue();
         // if we're refresing, skip the command queues that are involved
@@ -58,35 +59,32 @@ Command CommandQueue::GetCommandToIssue() {
                 continue;
             }
         }
-        UpdateCurrentState(queue);
-
-        std::vector<Command> ready_cmds = GetAllReadyCommands(queue);
-        if (ready_cmds.empty()) {
-            continue;
-        }
-
-        static thread_local std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> explore_dist(0.0f, 1.0f);
-
-        Command cmd;
-        if (explore_dist(rng) < exploration_rate_) {
-            std::uniform_int_distribution<size_t> idx_dist(0, ready_cmds.size() - 1);
-            cmd = ready_cmds[idx_dist(rng)];
-        } else {
-            cmd = GetHighestQCommand(queue);
-        }
-        if (cmd.IsValid()) {
-            int writes_to_same_row = CountWritesToSameRow(queue, cmd);
-            env_state_.writes_to_same_row.current.state =
-                writes_to_same_row > threshold_ ? 1 : 0;
-
-            if (cmd.IsReadWrite()) {
-                EraseRWCommand(cmd);
-            }
-            UpdateQValues(cmd);
-            return cmd;
-        }
+        std::vector<Command> this_queue_ = GetAllReadyCommands(queue);
+        ready_cmds.insert(ready_cmds.end(), this_queue_.begin(), this_queue_.end());
     }
+    UpdateCurrentState();
+    static thread_local std::mt19937 rng(std::random_device{}());
+    std::uniform_real_distribution<float> explore_dist(0.0f, 1.0f);
+
+    Command cmd;
+    if (explore_dist(rng) < exploration_rate_) {
+        std::uniform_int_distribution<size_t> idx_dist(0, ready_cmds.size() - 1);
+        cmd = ready_cmds[idx_dist(rng)];
+    } else {
+        cmd = GetHighestQCommand(ready_cmds);
+    }
+    if (cmd.IsValid()) {
+        int writes_to_same_row = CountWritesToSameRow(cmd);
+        env_state_.writes_to_same_row.current.state =
+            writes_to_same_row > threshold_ ? 1 : 0;
+
+        if (cmd.IsReadWrite()) {
+            EraseRWCommand(cmd);
+        }
+        UpdateQValues(cmd);
+        return cmd;
+    }
+    
     return Command();
 }
 
@@ -288,13 +286,12 @@ bool CommandQueue::HasRWDependency(const CMDIterator& cmd_it,
 //     };
 
 
-Command CommandQueue::GetHighestQCommand(CMDQueue& queue) const{
-    std::vector<Command> ready_cmds = GetAllReadyCommands(queue);
+Command CommandQueue::GetHighestQCommand(std::vector<Command> ready_cmds){
     if (!ready_cmds.empty()) {
         Command best_cmd = ready_cmds[0];
-        float best_q_value = CalculateQValue(best_cmd, queue);
+        float best_q_value = CalculateQValue(best_cmd);
         for (size_t i = 1; i < ready_cmds.size(); i++) {
-            float q_value = CalculateQValue(ready_cmds[i], queue);
+            float q_value = CalculateQValue(ready_cmds[i]);
             if (q_value > best_q_value) {
                 best_q_value = q_value;
                 best_cmd = ready_cmds[i];
@@ -325,18 +322,10 @@ std::vector<Command> CommandQueue::GetAllReadyCommands(CMDQueue& queue) const{
         }
         ready_cmds.push_back(cmd);
     }
-    if (ready_cmds.size() > 1){
-        for (const auto& cmd : ready_cmds) {
-            std::cout << "GetAllReadyCommands called " << call_count << " times, found " << ready_cmds.size() << " ready commands." << std::endl;
-            if (cmd.cmd_type != CommandType::ACTIVATE) {
-                std::cout << "Command: " << static_cast<int>(cmd.cmd_type) << std::endl;
-            }
-        }
-    }
     return ready_cmds;
 }
 
-float CommandQueue::CalculateQValue(const Command& cmd, const CMDQueue& queue) const {
+float CommandQueue::CalculateQValue(const Command& cmd) {
     int is_row_hit = 0;
     if (cmd.IsReadWrite()) {
         int open_row =
@@ -346,7 +335,7 @@ float CommandQueue::CalculateQValue(const Command& cmd, const CMDQueue& queue) c
         }
     }
     int writes_to_same_row_state =
-        CountWritesToSameRow(queue, cmd) > threshold_ ? 1 : 0;
+        CountWritesToSameRow(cmd) > threshold_ ? 1 : 0;
 
     auto get_q_val = [this, &cmd](const FeatureTrack& env, int state) {
         for (const auto& itr : env.Q_values) {
@@ -373,10 +362,9 @@ float CommandQueue::CalculateQValue(const Command& cmd, const CMDQueue& queue) c
     return Q_total;
 }
 void CommandQueue::UpdateQValues(const Command& cmd) {
-    float reward = 0;
+
     // Get reward based on command type
     if (cmd.IsReadWrite()) {
-        reward += 1; // additional reward for read/write command
         int open_row =
                 channel_state_.OpenRow(cmd.Rank(), cmd.Bankgroup(), cmd.Bank());
         if (open_row == cmd.Row()) {
@@ -387,10 +375,14 @@ void CommandQueue::UpdateQValues(const Command& cmd) {
     }
     
     // Update Q-values for each feature
-    auto set_current = [this, &cmd, reward](FeatureTrack& env) {
+    auto set_current = [this, &cmd](FeatureTrack& env) {
+        float reward = 0;
         float q_current = GetCurrentQValue(cmd, env);
         env.current = {env.current.state, cmd, q_current};
         env.history.push_back(env.current);
+        if (env.prev.cmd.IsReadWrite()) {
+            reward += 1;
+        }
 
         float q_prev_updated = SarsaUpdate(env.prev.value, reward, q_current);
 
@@ -415,36 +407,38 @@ void CommandQueue::UpdateQValues(const Command& cmd) {
     set_current(env_state_.writes_to_same_row);
     return;
 }
-void CommandQueue::UpdateCurrentState(CMDQueue& queue){
+void CommandQueue::UpdateCurrentState(){
     int num_rd = 0;
     int num_wr = 0;
     int row_hits = 0;
     int num_cmds_targeting_cls_banks = 0;
     int num_cmds_targeting_opn_banks = 0;
-    for (auto cmd_it = queue.begin(); cmd_it != queue.end(); cmd_it++){
-        if (cmd_it->IsRead()) {
-            num_rd++;
+    for (int i = 0; i < num_queues_; i++) {
+        auto& queue = GetNextQueue();
+        for (auto cmd_it = queue.begin(); cmd_it != queue.end(); cmd_it++){
+            if (cmd_it->IsRead()) {
+                num_rd++;
+                int open_row =
+                    channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
+                if (open_row == cmd_it->Row()) {
+                    row_hits++;
+                }
+            } else if (cmd_it->IsWrite()) {
+                num_wr++;
+                int open_row =
+                    channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
+                if (open_row == cmd_it->Row()) {
+                    row_hits++;
+                }
+            }
             int open_row =
                 channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
-            if (open_row == cmd_it->Row()) {
-                row_hits++;
-            }
-        } else if (cmd_it->IsWrite()) {
-            num_wr++;
-            int open_row =
-                channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
-            if (open_row == cmd_it->Row()) {
-                row_hits++;
+            if (open_row != -1) {
+                num_cmds_targeting_opn_banks++;
+            } else {
+                num_cmds_targeting_cls_banks++;
             }
         }
-        int open_row =
-            channel_state_.OpenRow(cmd_it->Rank(), cmd_it->Bankgroup(), cmd_it->Bank());
-        if (open_row != -1) {
-            num_cmds_targeting_opn_banks++;
-        } else {
-            num_cmds_targeting_cls_banks++;
-        }
-
     }
     //update num_rw_targeting_cls_bank_over_threshold
     if (num_cmds_targeting_cls_banks > threshold_) {
@@ -549,7 +543,8 @@ float CommandQueue::GetCurrentQValue(const Command cmd, FeatureTrack& env) const
     return (1.0f/(1.0f-discount_factor_));
 }
 
-int CommandQueue::CountWritesToSameRow(const CMDQueue& queue, const Command& cmd) const {
+int CommandQueue::CountWritesToSameRow(const Command& cmd) {
+    auto& queue = GetQueue(cmd.Rank(), cmd.Bankgroup(), cmd.Bank());
     int writes_to_same_row = 0;
     for (const auto& other : queue) {
         if (other.IsWrite() &&
