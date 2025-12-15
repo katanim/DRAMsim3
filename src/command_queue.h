@@ -45,9 +45,9 @@ class CommandQueue {
     Command PrepRefCmd(const CMDIterator& it, const Command& ref) const;
 
     /*Re-inforcement learning*/
-    float learning_rate_ = 1; // alpha
-    float discount_factor_ = 0.9; // gamma
-    float exploration_rate_ = 0.1; // epsilon
+    float learning_rate_ = 0.7; // alpha
+    float discount_factor_ = 0.95; // gamma
+    float exploration_rate_ = 0.05; // epsilon
     int threshold_ = 2; // threshold for number of commands needing same activate/precharge
     
     struct QTableKey {
