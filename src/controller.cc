@@ -75,6 +75,7 @@ void Controller::ClockTick() {
     // cannot find a refresh related command or there's no refresh
     if (!cmd.IsValid()) {
         cmd = cmd_queue_.GetCommandToIssue();
+        // cmd_queue_.GetCommandToIssue_frfcfs();
     }
 
     if (cmd.IsValid()) {

@@ -1,6 +1,7 @@
 #ifndef __COMMAND_QUEUE_H
 #define __COMMAND_QUEUE_H
 
+#include <string>
 #include <unordered_set>
 #include <vector>
 #include <map>
@@ -21,6 +22,7 @@ class CommandQueue {
     CommandQueue(int channel_id, const Config& config,
                  const ChannelState& channel_state, SimpleStats& simple_stats);
     Command GetCommandToIssue();
+    Command GetCommandToIssue_frfcfs();
     Command FinishRefresh();
     void ClockTick() { clk_ += 1; };
     bool WillAcceptCommand(int rank, int bankgroup, int bank) const;
@@ -40,6 +42,7 @@ class CommandQueue {
     int GetQueueIndex(int rank, int bankgroup, int bank) const;
     CMDQueue& GetQueue(int rank, int bankgroup, int bank);
     CMDQueue& GetNextQueue();
+    CMDQueue& GetNextQueue_frfcfs();
     void GetRefQIndices(const Command& ref);
     void EraseRWCommand(const Command& cmd);
     Command PrepRefCmd(const CMDIterator& it, const Command& ref) const;
@@ -90,6 +93,8 @@ class CommandQueue {
     SimpleStats& simple_stats_;
 
     std::vector<CMDQueue> queues_;
+    std::vector<std::pair<std::string, float>> fr_fcfs_values_;
+    std::vector<std::pair<std::string, float>> self_opt_values_;
 
     // Refresh related data structures
     std::unordered_set<int> ref_q_indices_;
@@ -98,6 +103,7 @@ class CommandQueue {
     int num_queues_;
     size_t queue_size_;
     int queue_idx_;
+    int queue_idx_frfcfs;
     uint64_t clk_;
 };
 

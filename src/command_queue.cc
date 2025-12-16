@@ -1,4 +1,6 @@
 #include "command_queue.h"
+#include <algorithm>
+#include <fstream>
 #include <random>
 
 namespace dramsim3 {
@@ -13,6 +15,7 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
       is_in_ref_(false),
       queue_size_(static_cast<size_t>(config_.cmd_queue_size)),
       queue_idx_(0),
+      queue_idx_frfcfs(0),
       clk_(0) {
     if (config_.queue_structure == "PER_BANK") {
         queue_structure_ = QueueStructure::PER_BANK;
@@ -47,6 +50,25 @@ CommandQueue::CommandQueue(int channel_id, const Config& config,
     init_env(env_state_.current_cmd_row_hit);
     init_env(env_state_.writes_to_same_row);
     // init_env(env_state_.write_draining);
+}
+
+Command CommandQueue::GetCommandToIssue_frfcfs() {
+    for (int i = 0; i < num_queues_; i++) {
+        auto& queue = GetNextQueue_frfcfs();
+        // if we're refresing, skip the command queues that are involved
+        if (is_in_ref_) {
+            if (ref_q_indices_.find(queue_idx_frfcfs) != ref_q_indices_.end()) {
+                continue;
+            }
+        }
+        auto cmd = GetFirstReadyInQueue(queue);
+        if (cmd.IsValid()) {
+            fr_fcfs_values_.push_back(
+                {ToString(cmd.cmd_type), CalculateQValue(cmd)});
+            return cmd;
+        }
+    }
+    return Command();
 }
 
 Command CommandQueue::GetCommandToIssue() {
@@ -175,6 +197,14 @@ bool CommandQueue::AddCommand(Command cmd) {
     }
 }
 
+CMDQueue& CommandQueue::GetNextQueue_frfcfs() {
+    queue_idx_frfcfs ++;
+    if (queue_idx_frfcfs == num_queues_) {
+        queue_idx_frfcfs = 0;
+    }
+    return queues_[queue_idx_frfcfs];
+}
+
 CMDQueue& CommandQueue::GetNextQueue() {
     queue_idx_++;
     if (queue_idx_ == num_queues_) {
@@ -291,6 +321,9 @@ bool CommandQueue::HasRWDependency(const CMDIterator& cmd_it,
 //     };
 
 
+/// @brief 
+/// @param ready_cmds 
+/// @return 
 Command CommandQueue::GetHighestQCommand(std::vector<Command> ready_cmds){
     if (!ready_cmds.empty()) {
         Command best_cmd = ready_cmds[0];
@@ -302,6 +335,8 @@ Command CommandQueue::GetHighestQCommand(std::vector<Command> ready_cmds){
                 best_cmd = ready_cmds[i];
             }
         }
+        self_opt_values_.push_back(
+            {ToString(best_cmd.cmd_type), best_q_value});
         return best_cmd;
     }
     return Command();
@@ -528,6 +563,23 @@ void CommandQueue::DumpEnvState(const std::string& filename) const {
     print_q_vals(env_state_.current_cmd_row_hit, "current_cmd_row_hit");
     print_q_vals(env_state_.writes_to_same_row, "writes_to_same_row");
 
+    filename_ = filename + "_q_compare.csv";
+    outfile.close();
+    outfile.open(filename_, std::ios_base::app);
+    outfile << "cycle,fr_fcfs_cmd,fr_fcfs_q,self_opt_cmd,self_opt_q,diff(self_opt-fr_fcfs)" << std::endl;
+    size_t max_cycles = std::max(fr_fcfs_values_.size(),
+                                 self_opt_values_.size());
+    for (size_t i = 0; i < max_cycles; i++) {
+        const bool has_fr = i < fr_fcfs_values_.size();
+        const bool has_self = i < self_opt_values_.size();
+        std::string fr_cmd = has_fr ? fr_fcfs_values_[i].first : "NA";
+        std::string self_cmd = has_self ? self_opt_values_[i].first : "NA";
+        float fr_q = has_fr ? fr_fcfs_values_[i].second : 0.0f;
+        float self_q = has_self ? self_opt_values_[i].second : 0.0f;
+        outfile << i << "," << fr_cmd << "," << fr_q << ","
+                << self_cmd << "," << self_q << "," << self_q - fr_q << std::endl;
+    }
+    outfile.close();
 
 }
 float CommandQueue::SarsaUpdate(float Q_prev, int reward, float Q_selected) {
